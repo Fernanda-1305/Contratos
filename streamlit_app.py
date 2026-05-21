@@ -114,12 +114,12 @@ COLUNAS_MANUAIS = [
     "Data da aprovação da gerência",
     "Data Início Desejado",
     "Início de Cotação",
-    "Fim de Cotação",                   # ← NOVO: editável
-    "Data da Definição do fornecedor",  # ← NOVO
-    "Data Elaboração Contrato",         # ← NOVO
-    "Elaboração Contrato",              # ← NOVO: status Concluído/Em andamento
-    "Data de Assinatura",               # ← NOVO
-    "Prazo de Assinatura",              # ← NOVO: editável, sem fórmula
+    "Fim de Cotação",
+    "Data da Definição do fornecedor",
+    "Data Elaboração Contrato",
+    "Elaboração Contrato",
+    "Data de Assinatura",
+    "Prazo de Assinatura",
     "Contrato Assinado",
     "Status Cotação",
     "Observação 1","Observação 2","Observação 3",
@@ -129,7 +129,7 @@ COLUNAS_MANUAIS = [
 COLUNAS_BASE2 = [
     "Solicitação",
     "Data solicitada",
-    "Data da aprovação da gerência",    # ← NOVO
+    "Data da aprovação da gerência",
     "Obra",
     "Serviços",
     "Qtd Serviços",
@@ -139,10 +139,10 @@ COLUNAS_BASE2 = [
     "Início de Cotação",
     "Fim de Cotação",
     "Status Cotação",
-    "Data da Definição do fornecedor",  # ← NOVO
-    "Data Elaboração Contrato",         # ← NOVO
-    "Elaboração Contrato",              # ← NOVO
-    "Data de Assinatura",               # ← NOVO
+    "Data da Definição do fornecedor",
+    "Data Elaboração Contrato",
+    "Elaboração Contrato",
+    "Data de Assinatura",
     "Prazo de Assinatura",
     "Contrato Assinado",
     "Status",
@@ -248,13 +248,12 @@ def parse_base1(uploaded_file):
         rows.append({
             "Solicitação":              s.get("numero",""),
             "Data solicitada":          s.get("data",""),
-            "Data da aprovação da gerência": "",   # ← NOVO: editável
+            "Data da aprovação da gerência": "",
             "Obra":                     s.get("obra",""),
             "Serviços":                 "; ".join(s.get("servicos",[])),
             "Qtd Serviços":             str(s.get("qtd",0)),
             "Solicitante":              s.get("solicitante",""),
             "Observação Original":      s.get("obs",""),
-            # campos manuais em branco
             "Data Início Desejado":"","Início de Cotação":"","Fim de Cotação":"",
             "Data da Definição do fornecedor":"","Data Elaboração Contrato":"",
             "Elaboração Contrato":"","Data de Assinatura":"",
@@ -277,7 +276,6 @@ def parse_base2_exportado(uploaded_file):
     try:
         df = pd.read_excel(uploaded_file, sheet_name=0, dtype=str).fillna("")
         df.columns = [str(c).strip() for c in df.columns]
-        # Garante que todas as colunas existem
         for col in COLUNAS_BASE2:
             if col not in df.columns:
                 df[col] = ""
@@ -298,7 +296,6 @@ def calcular_derivados(df):
     hoje = date.today()
 
     def prazo_resp(row):
-        # ← NOVO: usa Data da aprovação da gerência; fallback para Data solicitada
         base = safe_parse_date(row.get("Data da aprovação da gerência",""))
         if base is None:
             base = safe_parse_date(row.get("Data solicitada",""))
@@ -309,7 +306,6 @@ def calcular_derivados(df):
             return ""
 
     def fim_cot_ref(row):
-        # Só preenche se estiver vazio (campo editável)
         if str(row.get("Fim de Cotação","")).strip(): return row["Fim de Cotação"]
         d = safe_parse_date(row.get("Início de Cotação",""))
         return fmt_date(d + timedelta(days=DIAS_JANELA_COTACAO)) if d else ""
@@ -360,17 +356,15 @@ def merge_historico(historico, novos, fonte="erp"):
         return calc, len(calc)
 
     if fonte == "app":
-        # ← NOVO: re-importar Excel exportado — atualiza campos manuais
         historico = historico.set_index("Solicitação")
         novos_idx = novos.set_index("Solicitação")
         for col in COLUNAS_MANUAIS:
             if col in novos_idx.columns:
-                # só sobrescreve onde o valor exportado não está vazio
                 mask = novos_idx[col].astype(str).str.strip() != ""
                 historico.loc[novos_idx.index[mask], col] = novos_idx.loc[mask, col]
         historico = historico.reset_index()
         resultado = calcular_derivados(historico)
-        return resultado, 0   # 0 = nenhuma linha nova, só atualizações
+        return resultado, 0
 
     # fonte == "erp": comportamento original
     existentes = set(historico["Solicitação"].astype(str))
@@ -482,9 +476,22 @@ with st.sidebar:
     st.markdown('<div style="font-size:8.5px;font-weight:700;letter-spacing:1.6px;'
                 'color:#234a6a;text-transform:uppercase;margin-bottom:5px;">Filtrar Obra</div>',
                 unsafe_allow_html=True)
+
+    # ✅ CORREÇÃO 2 — Sidebar: ignora obras vazias ou só com espaços
     obras_disp = ["Todas as obras"]
     if not historico.empty:
-        obras_disp += sorted(historico["Obra"].dropna().unique().tolist())
+        obras_validas = (
+            historico["Obra"]
+            .replace("", pd.NA)
+            .dropna()
+            .str.strip()
+            .replace("", pd.NA)
+            .dropna()
+            .unique()
+            .tolist()
+        )
+        obras_disp += sorted(obras_validas)
+
     obra_sel = st.selectbox("", obras_disp, label_visibility="collapsed")
     st.divider()
 
@@ -574,7 +581,6 @@ if menu == "📊  Análise de Contrato":
                     df_atual, qtd = merge_historico(df_atual, novos_df, fonte="erp")
                     total_novas  += qtd
                 else:
-                    # ← NOVO: reimporta Excel exportado
                     novos_df = parse_base2_exportado(uf)
                     if novos_df.empty:
                         erros.append(f"⚠️ {uf.name}: planilha vazia.")
@@ -610,7 +616,14 @@ if menu == "📊  Análise de Contrato":
     st.markdown('<div class="sec-title">📈 Indicadores Gerais</div>', unsafe_allow_html=True)
 
     total_sol   = df_fil["Solicitação"].nunique() if not df_fil.empty else 0
-    total_obras = df_fil["Obra"].nunique()         if not df_fil.empty else 0
+
+    # ✅ CORREÇÃO 1 — KPI Obras: ignora valores vazios e só com espaços
+    total_obras = (
+        df_fil["Obra"].replace("", pd.NA).dropna()
+        .str.strip().replace("", pd.NA).dropna()
+        .nunique()
+    ) if not df_fil.empty else 0
+
     total_pess  = df_fil["Solicitante"].nunique()  if not df_fil.empty else 0
     total_serv  = sum(int(v) for v in df_fil["Qtd Serviços"]
                       if str(v).lstrip("-").isdigit()) if not df_fil.empty else 0
@@ -647,13 +660,17 @@ if menu == "📊  Análise de Contrato":
 
         with g1:
             st.markdown('<div class="chart-box">', unsafe_allow_html=True)
-            d = df_fil.groupby("Obra")["Solicitação"].nunique().reset_index()
-            d.columns = ["Obra","Qtd"]
-            d = d.sort_values("Qtd")
+
+            # ✅ CORREÇÃO 3 — Gráfico "Por Obra": remove obras vazias antes de agrupar
+            df_b = df_fil[df_fil["Obra"].str.strip() != ""].copy()
+            df_b = df_b.groupby("Obra")["Solicitação"].nunique().reset_index()
+            df_b.columns = ["Obra","Qtd"]
+            df_b = df_b.sort_values("Qtd")
+
             fig1 = go.Figure(go.Bar(
-                x=d["Qtd"], y=d["Obra"], orientation="h",
-                marker_color=CORES_OBRAS[:len(d)],
-                text=d["Qtd"], textposition="outside",
+                x=df_b["Qtd"], y=df_b["Obra"], orientation="h",
+                marker_color=CORES_OBRAS[:len(df_b)],
+                text=df_b["Qtd"], textposition="outside",
                 textfont=dict(color="#b0d4f0",size=11),
             ))
             fig1.update_layout(
@@ -803,7 +820,6 @@ elif menu == "📋  Controle & Exportar":
 
         tab_view, tab_edit, tab_exp = st.tabs(["👁️ Visualizar","✏️ Editar","📥 Exportar"])
 
-        # Colunas de visualização atualizadas
         COLS_VIEW = [
             "Solicitação","Data solicitada","Data da aprovação da gerência",
             "Obra","Solicitante","Serviços","Qtd Serviços",
@@ -833,17 +849,16 @@ elif menu == "📋  Controle & Exportar":
                 unsafe_allow_html=True
             )
 
-            # Colunas editáveis — todas as novas colunas incluídas
             COLS_EDIT = [
                 "Solicitação","Obra","Serviços",
-                "Data da aprovação da gerência",    # ← NOVO editável
+                "Data da aprovação da gerência",
                 "Data Início Desejado",
                 "Início de Cotação",
-                "Fim de Cotação",                   # ← NOVO editável
-                "Data da Definição do fornecedor",  # ← NOVO editável
-                "Data Elaboração Contrato",         # ← NOVO editável
-                "Elaboração Contrato",              # ← NOVO selectbox
-                "Data de Assinatura",               # ← NOVO editável
+                "Fim de Cotação",
+                "Data da Definição do fornecedor",
+                "Data Elaboração Contrato",
+                "Elaboração Contrato",
+                "Data de Assinatura",
                 "Prazo de Assinatura",
                 "Contrato Assinado",
                 "Status Cotação",
@@ -865,12 +880,12 @@ elif menu == "📋  Controle & Exportar":
                     "Obra":        st.column_config.TextColumn("Obra", disabled=True),
                     "Serviços":    st.column_config.TextColumn("Serviços", disabled=True),
                     "Elaboração Contrato": st.column_config.SelectboxColumn(
-                        "Elaboração Contrato", options=ELABORACAO_OPTS),  # ← NOVO
+                        "Elaboração Contrato", options=ELABORACAO_OPTS),
                     "Status Cotação": st.column_config.SelectboxColumn(
                         "Status Cotação", options=STATUS_COTACAO_EDIT),
                     "Contrato Assinado": st.column_config.SelectboxColumn(
                         "Contrato Assinado",
-                        options=["","Assinado","Em andamento","Pendente","Cancelado"]),  # ← "Em andamento" adicionado
+                        options=["","Assinado","Em andamento","Pendente","Cancelado"]),
                 },
                 use_container_width=True,
                 hide_index=True,
@@ -889,7 +904,8 @@ elif menu == "📋  Controle & Exportar":
 
         with tab_exp:
             st.markdown(kpi("Registros disponíveis", len(historico),
-                f"{historico['Obra'].nunique()} obra(s) · {historico['Solicitação'].nunique()} solicitação(ões)",
+                # ✅ CORREÇÃO 1 aplicada também na aba Exportar
+                f"{historico['Obra'].replace('', pd.NA).dropna().str.strip().replace('', pd.NA).dropna().nunique()} obra(s) · {historico['Solicitação'].nunique()} solicitação(ões)",
                 "📂","#005cc8"), unsafe_allow_html=True)
             st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
 
